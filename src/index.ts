@@ -4,6 +4,7 @@ export interface Env {
   AI: { run: (model: string, payload: any) => Promise<any> };
   API_KEY?: string;
   TEST_MODE?: string; // "stub" para testes locais sem IA
+  LLM_MODEL?: string; // modelo LLM a ser usado (importante-comment)
 }
 
 /* =================== Config =================== */
@@ -328,38 +329,42 @@ async function classifyWithLLM(env: Env, claim: string, context: string) {
   const instructions =
 `Você é a IAPivara, IA especializada em checagem de fake news brasileiras.
 
-INSTRUÇÕES ESPECÍFICAS:
-- Analise se a ALEGAÇÃO é VERDADEIRA ou FALSA baseado no CONTEXTO fornecido
-- Se o contexto contém evidências de fontes confiáveis (G1, Folha, UOL, etc.), use essas evidências
-- Se a alegação contradiz as evidências (ex: "X morreu" mas evidências mostram "X está vivo"), retorne RED
-- Se as evidências confirmam a alegação claramente, retorne GREEN
-- Se não há evidências suficientes ou são contraditórias, retorne YELLOW
-- Seja DIRETO e FACTUAL, evite especulações
-- Para mortes/óbitos: só confirme se há múltiplas fontes confiáveis
-- Para fatos históricos/esportivos: use conhecimento estabelecido (ex: Brasil é pentacampeão)
-- Para status de celebridades: seja conservador, prefira YELLOW se incerto
-- NUNCA invente informações - se não tem certeza, retorne YELLOW
+INSTRUÇÕES CRÍTICAS PARA REDUZIR ALUCINAÇÕES:
+- Analise APENAS o CONTEXTO fornecido - NÃO use conhecimento externo
+- Se a alegação contradiz as evidências do contexto, retorne RED
+- Se as evidências do contexto confirmam a alegação, retorne GREEN  
+- Se não há evidências suficientes no contexto, retorne YELLOW
+- NUNCA invente ou assuma informações não presentes no contexto
+- Para perguntas sobre status (vivo/morto, casado/solteiro): seja EXTREMAMENTE conservador
+- Para causação médica: se evidências mostram "X não causa Y", retorne RED para "X causa Y"
 
-EXEMPLOS DE RACIOCÍNIO:
-- "Gugu morreu?" + evidências de morte → GREEN
-- "Gugu está vivo?" + evidências de morte → RED  
-- "X causa Y?" + evidências "X não causa Y" → RED
-- Sem evidências claras → YELLOW
+REGRAS DE CLASSIFICAÇÃO:
+- RED = Alegação é FALSA baseado nas evidências
+- GREEN = Alegação é VERDADEIRA baseado nas evidências  
+- YELLOW = Evidências insuficientes ou contraditórias
 
-FORMATO: {"light":"red|yellow|green","confidence":0-1,"reason":"explicação clara e direta"}`;
+EXEMPLOS CRÍTICOS:
+- "Gugu está vivo?" + contexto mostra morte → RED (alegação falsa)
+- "Paracetamol causa autismo?" + contexto "não causa" → RED (alegação falsa)
+- "Brasil é penta?" + contexto confirma 5 copas → GREEN (alegação verdadeira)
+- Sem evidências claras no contexto → YELLOW
+
+FORMATO: {"light":"red|yellow|green","confidence":0-1,"reason":"explicação baseada APENAS no contexto"}`;
 
   const messages = [
     { role: "system", content: instructions },
     { role: "user", content:
 `ALEGACAO: ${claim}
 
-CONTEXTO: ${context.slice(0,2000)}
+CONTEXTO: ${context.slice(0,2500)}
 
 Retorne SOMENTE JSON: {"light":"red|yellow|green","confidence":0-1,"reason":"frase curta"}` }
   ];
 
+  // Test with more capable reasoning model for better accuracy
   // @ts-ignore
-  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", { messages });
+  const modelName = env.LLM_MODEL || "@cf/meta/llama-3.1-8b-instruct";
+  const result = await env.AI.run(modelName, { messages });
   const raw = (result?.response ?? result ?? "{}").toString();
   try { return JSON.parse(raw); }
   catch { return { light:"yellow", confidence:0.4, reason:"Modelo não retornou JSON válido." }; }
