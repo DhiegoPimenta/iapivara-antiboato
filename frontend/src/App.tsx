@@ -31,7 +31,8 @@ function App() {
 
   const sendMessage = async (text: string): Promise<ApiResponse> => {
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL, {
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://api.iapivara.com.br';
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
