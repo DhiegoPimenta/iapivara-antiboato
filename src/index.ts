@@ -367,13 +367,58 @@ const worker = {
       }, 200, CORS);
     }
 
-    // Fallback LLM -> amarelo
+    const hasAnyEvidence = all.length > 0;
+    const hasModerateEvidence = all.filter(e => e.score >= 1).length > 0;
+    const totalScore = all.reduce((sum, e) => sum + e.score, 0);
+    const avgScore = hasAnyEvidence ? totalScore / all.length : 0;
+    
+    if (!death && hasAnyEvidence && (avgScore >= 1.5 || hasModerateEvidence)) {
+      const llm = await classifyWithLLM(env, claim, content);
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "green",
+        confidence: Math.min(0.85, 0.6 + (avgScore * 0.1)),
+        reason: "Evidências encontradas em fontes confiáveis suportam a alegação; " + (llm?.reason ?? "informação verificada."),
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
     const llm = await classifyWithLLM(env, claim, content);
+    const llmLight = llm?.light || "yellow";
+    const llmReason = llm?.reason || "sem confirmação";
+    
+    if (llmLight === "green") {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "green",
+        confidence: Math.max(0.75, Number(llm?.confidence ?? 0.75)),
+        reason: "Informação confirmada; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
+    if (llmLight === "red") {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "red",
+        confidence: Math.max(0.75, Number(llm?.confidence ?? 0.75)),
+        reason: "Informação não confirmada; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+
+    // Default fallback -> amarelo
     return json({
       engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
       overall: "yellow",
       confidence: Math.max(0.5, Number(llm?.confidence ?? 0.5)),
-      reason: "Não encontrei evidências sólidas em fontes confiáveis; " + (llm?.reason ?? "sem confirmação."),
+      reason: "Não encontrei evidências sólidas em fontes confiáveis; " + llmReason,
       claim,
       sources: url ? [url] : [],
       evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
