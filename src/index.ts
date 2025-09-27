@@ -217,7 +217,8 @@ async function findCorroboration(claim: string): Promise<{all:Evidence[], strong
   const phrase = bestPhrase(claim);
   const baseQuery = phrase ? `"${phrase}"` : enhancedStems.slice(0, 6).join(" ");
 
-  const perDomain = await Promise.all(TRUSTED_DOMAINS.map(async (dom) => {
+  const priorityDomains = TRUSTED_DOMAINS.slice(0, 6);
+  const perDomain = await Promise.all(priorityDomains.map(async (dom) => {
     try {
       const items = await ddgSearchSite(baseQuery, dom);
       const evidences: Evidence[] = items.map(it => ({
