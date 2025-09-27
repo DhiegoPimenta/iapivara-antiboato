@@ -21,19 +21,17 @@ const TRUSTED = [
   "g1.globo.com","uol.com.br","noticias.r7.com","terra.com.br",
   "folha.uol.com.br","estadao.com.br","cnnbrasil.com.br",
   "bbc.com","bbc.co.uk","cnn.com","valor.globo.com","veja.abril.com.br",
-  // esporte / histórico
-  "fifa.com","cbf.com.br","pt.wikipedia.org","en.wikipedia.org",
   // checagem
   "aosfatos.org","lupa.uol.com.br","boatos.org"
 ];
 
+// a lista usada para buscas (igual à acima, mas como vetor único)
 const TRUSTED_DOMAINS = [
   "g1.globo.com","uol.com.br","noticias.r7.com","terra.com.br",
   "folha.uol.com.br","estadao.com.br","cnnbrasil.com.br",
-  "bbc.com","bbc.co.uk","cnn.com","valor.globo.com","veja.abril.com.br",
-  "agenciabrasil.ebc.com.br","gov.br","planalto.gov.br","tse.jus.br","stf.jus.br",
-  "ibge.gov.br","ipea.gov.br","who.int","paho.org",
-  "fifa.com","cbf.com.br","pt.wikipedia.org","en.wikipedia.org",
+  "bbc.com","bbc.co.uk","cnn.com","agenciabrasil.ebc.com.br",
+  "gov.br","planalto.gov.br","tse.jus.br","stf.jus.br","ibge.gov.br","ipea.gov.br",
+  "who.int","paho.org","valor.globo.com","veja.abril.com.br",
   "aosfatos.org","lupa.uol.com.br","boatos.org"
 ];
 
@@ -43,15 +41,10 @@ const OUT_OF_SCOPE_HINTS = [
   "capital da frança","jogo","signo","horóscopo","piadas","tocar música","cantar"
 ];
 
+// termos para intenção de morte
 const DEATH_KWS = ["morreu","faleceu","óbito","obito","morte","está morto","esta morto"];
 
 /* =================== Utils =================== */
-
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-headers": "content-type,x-api-key",
-  "access-control-allow-methods": "POST,OPTIONS"
-};
 
 function json(data: unknown, status = 200, extraHeaders: Record<string,string> = {}) {
   return new Response(JSON.stringify(data, null, 2), {
@@ -60,10 +53,16 @@ function json(data: unknown, status = 200, extraHeaders: Record<string,string> =
   });
 }
 
-function stripTags(s: string){ return s.replace(/<[^>]+>/g,""); }
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "content-type,x-api-key",
+  "access-control-allow-methods": "POST,OPTIONS"
+};
+
 function removeDiacritics(str: string) {
   return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
+function stripTags(s: string){ return s.replace(/<[^>]+>/g,""); }
 function getHost(url: string){ try{ return new URL(url).hostname.replace(/^www\./,''); }catch{ return ""; } }
 function isRestricted(urlStr: string){ const h=getHost(urlStr).toLowerCase(); return RESTRICTED.some(d=>h.includes(d)); }
 function isTrusted(urlStr: string){ const h=getHost(urlStr).toLowerCase(); return TRUSTED.some(d=>h.includes(d)); }
@@ -90,6 +89,7 @@ function extractNames(text: string): string[] {
       if (ok) { candidates.add(slice.join(" ")); break; }
     }
   }
+  // normaliza duplicatas
   const norm=(s:string)=>removeDiacritics(s.toLowerCase());
   const out:string[]=[];
   for (const c of candidates){
@@ -107,9 +107,7 @@ function toStems(text: string): string[] {
 
 function scoreByStems(title: string, stems: string[]) {
   const t = removeDiacritics(title.toLowerCase());
-  let s = stems.reduce((sum, st) => sum + (t.includes(st) ? 1 : 0), 0);
-  if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 1;
-  return s;
+  return stems.reduce((s,st)=> s + (t.includes(st)?1:0), 0);
 }
 
 function bestPhrase(text: string){
@@ -139,6 +137,7 @@ function extractClaim(text: string): string {
 
 /* =================== Busca via DuckDuckGo =================== */
 
+// Busca “lite” no DuckDuckGo com filtro site:
 async function ddgSearchSite(query: string, domain: string): Promise<{title:string,url:string}[]> {
   const q = `${query} site:${domain}`;
   const resp = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
@@ -146,6 +145,7 @@ async function ddgSearchSite(query: string, domain: string): Promise<{title:stri
   });
   const html = await resp.text();
 
+  // DuckDuckGo HTML: resultados em <a class="result__a" href="...">titulo</a>
   const out: {title:string,url:string}[] = [];
   const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/ig;
   let m;
@@ -173,9 +173,11 @@ async function findCorroboration(claim: string): Promise<{all:Evidence[], strong
   const death = hasDeathIntent(claim);
   const primaryName = names[0];
 
+  // query base
   const phrase = bestPhrase(claim);
-  const baseQuery = phrase ? `"${phrase}"` : stems.slice(0, 6).join(" ");
+  const baseQuery = phrase ? `"${phrase}"` : stems.slice(0,6).join(" ");
 
+  // consulta vários domínios
   const perDomain = await Promise.all(TRUSTED_DOMAINS.map(async (dom) => {
     const items = await ddgSearchSite(baseQuery, dom);
     const evidences: Evidence[] = items.map(it => ({
@@ -187,6 +189,7 @@ async function findCorroboration(claim: string): Promise<{all:Evidence[], strong
     return evidences;
   }));
 
+  // dedupe por domínio (pega o melhor título)
   const allRaw = perDomain.flat();
   const bestPerDomain: Record<string, Evidence> = {};
   for (const e of allRaw) {
@@ -251,6 +254,7 @@ const worker = {
     const text: string | undefined = body.text;
     if (!url && !text) return json({ error: "Envie { url } ou { text }" }, 400, CORS);
 
+    // guarda-corpo de escopo
     if (text && isOutOfScope(text)) {
       return json({ overall: "yellow", note: "Sou usada apenas para validar fake news." }, 200, CORS);
     }
@@ -269,46 +273,17 @@ const worker = {
 
     const claim = extractClaim(content);
 
-    // FAST-PATH: link de domínio confiável -> verde
-    if (url && isTrusted(url)) {
-      const titleFromPage = content.split(" — ")[0] || content.slice(0, 120);
-      return json({
-        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
-        overall: "green",
-        confidence: 0.9,
-        reason: "Link em domínio confiável e conteúdo extraído com sucesso.",
-        claim: titleFromPage,
-        sources: [url],
-        evidence: [{ source: getHost(url), title: titleFromPage, url }]
-      }, 200, CORS);
-    }
-
-    // Busca em fontes confiáveis
+    // 1) Busca e decisão por evidência
     const { all, strong } = await findCorroboration(claim);
-    const death = hasDeathIntent(claim);
     const strongDomains = new Set(strong.map(e => getHost(e.url)));
     const enoughStrong = strongDomains.size >= 2;
 
-    // Caso especial: "morreu?" sem evidência -> vermelho
-    if (death && strongDomains.size === 0) {
-      return json({
-        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
-        overall: "red",
-        confidence: 0.9,
-        reason: "Não há confirmação em fontes confiáveis; indicativos públicos de que a pessoa está viva.",
-        claim,
-        sources: url ? [url] : [],
-        evidence: []
-      }, 200, CORS);
-    }
-
-    // Evidência suficiente -> verde
     if (enoughStrong) {
       return json({
-        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        engine: env.TEST_MODE==="stub"?"stub":"workers-ai",
         overall: "green",
         confidence: 0.92,
-        reason: death
+        reason: hasDeathIntent(claim)
           ? "Múltiplas fontes confiáveis reportam o óbito."
           : "Múltiplas fontes confiáveis confirmam a alegação.",
         claim,
@@ -320,10 +295,10 @@ const worker = {
       }, 200, CORS);
     }
 
-    // Fallback LLM -> amarelo
+    // 2) Fallback LLM para explicar incerteza
     const llm = await classifyWithLLM(env, claim, content);
     return json({
-      engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+      engine: env.TEST_MODE==="stub"?"stub":"workers-ai",
       overall: "yellow",
       confidence: Math.max(0.5, Number(llm?.confidence ?? 0.5)),
       reason: "Não encontrei evidências sólidas em fontes confiáveis; " + (llm?.reason ?? "sem confirmação."),
