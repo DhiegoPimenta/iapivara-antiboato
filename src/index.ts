@@ -175,7 +175,7 @@ function detectContradiction(claim: string, llmReason: string): boolean {
   const normalizedReason = removeDiacritics(llmReason.toLowerCase());
   
   const contradictions = [
-    { claimPattern: /morreu|morte|obito|faleceu/, reasonPattern: /vivo|ativo|vive/ },
+    { claimPattern: /morreu|morte|morto|morta|mortos|mortas|obito|faleceu|falecimento/, reasonPattern: /vivo|viva|vivos|vivas|ativo|ativa|ativos|ativas|vive/ },
     { claimPattern: /nao|não/, reasonPattern: /sim|verdade|confirma/ },
     { claimPattern: /falso|mentira/, reasonPattern: /verdade|correto|confirma/ },
     { claimPattern: /cancelad|rejeitad|derrubad/, reasonPattern: /aprovad|confirmad|mantid/ },
@@ -431,7 +431,7 @@ const worker = {
     
     const hasContradiction = detectContradiction(claim, llmReason);
     
-    if (hasContradiction && llmConfidence >= 0.6) {
+    if (hasContradiction) {
       return json({
         engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
         overall: "red",
