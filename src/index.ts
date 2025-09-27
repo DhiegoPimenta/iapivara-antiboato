@@ -107,7 +107,89 @@ function toStems(text: string): string[] {
 
 function scoreByStems(title: string, stems: string[]) {
   const t = removeDiacritics(title.toLowerCase());
-  return stems.reduce((s,st)=> s + (t.includes(st)?1:0), 0);
+  let s = stems.reduce((sum, st) => sum + (t.includes(st) ? 1 : 0), 0);
+  
+  if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 2;
+  
+  if (/(penta|pentacampe[aã]o|copa.*mundo|mundial.*futebol|1958|1962|1970|1994|2002|hexa|tetra|tri|bi)/.test(t)) s += 2;
+  
+  if (/(vivo|ativo|presidente|ex-presidente|candidato|politico|lider|morreu|morte|obito|faleceu)/.test(t)) s += 2;
+  
+  if (/(capital|sede|distrito.*federal|estado|regiao|litoral|praia|costa|porto)/.test(t)) s += 2;
+  
+  if (/(banda|musica|rock|emo|album|show|artista|cantor)/.test(t)) s += 2;
+  
+  if (/(parque|disney|investimento|construcao|projeto|anuncio)/.test(t)) s += 2;
+  
+  if (/(pec|emenda|constitucional|congresso|aprovacao|rejeicao|cancelada|aprovada)/.test(t)) s += 2;
+  
+  if (/(confirma|confirmado|verdade|fato|historico|registro|oficial)/.test(t)) s += 1;
+  
+  return s;
+}
+
+function enhanceSearchTerms(claim: string): string[] {
+  const stems = toStems(claim);
+  const enhanced = [...stems];
+  
+  const normalizedClaim = removeDiacritics(claim.toLowerCase());
+  
+  if (normalizedClaim.includes("penta") || normalizedClaim.includes("cinco") || normalizedClaim.includes("5")) {
+    if (normalizedClaim.includes("brasil") || normalizedClaim.includes("copa")) {
+      enhanced.push("brasil", "pentacampeao", "copa", "mundo", "futebol", "selecao", "cbf");
+    }
+  }
+  
+  if (normalizedClaim.includes("capital")) {
+    enhanced.push("capital", "sede", "governo", "distrito", "federal");
+  }
+  
+  if (normalizedClaim.includes("banda") || normalizedClaim.includes("emo") || normalizedClaim.includes("rock")) {
+    enhanced.push("musica", "banda", "rock", "emo", "album", "show");
+  }
+  
+  if (normalizedClaim.includes("litoral") || normalizedClaim.includes("praia") || normalizedClaim.includes("costa")) {
+    enhanced.push("litoral", "praia", "costa", "mar", "porto", "cidade");
+  }
+  
+  if (normalizedClaim.includes("parque") || normalizedClaim.includes("disney")) {
+    enhanced.push("parque", "tematico", "disney", "turismo", "investimento");
+  }
+  
+  if (normalizedClaim.includes("pec") || normalizedClaim.includes("blindagem")) {
+    enhanced.push("pec", "emenda", "constitucional", "congresso", "aprovacao", "rejeicao");
+  }
+  
+  if (hasDeathIntent(claim)) {
+    const names = extractNames(claim);
+    if (names.length > 0) {
+      enhanced.push("morte", "obito", "falecimento", "morreu", "vivo", "ativo");
+    }
+  }
+  
+  return [...new Set(enhanced)];
+}
+
+function detectContradiction(claim: string, llmReason: string): boolean {
+  const normalizedClaim = removeDiacritics(claim.toLowerCase());
+  const normalizedReason = removeDiacritics(llmReason.toLowerCase());
+  
+  const contradictions = [
+    { claimPattern: /morreu|morte|morto|morta|mortos|mortas|obito|faleceu|falecimento/, reasonPattern: /vivo|viva|vivos|vivas|ativo|ativa|ativos|ativas|vive/ },
+    { claimPattern: /nao|não/, reasonPattern: /sim|verdade|confirma/ },
+    { claimPattern: /falso|mentira/, reasonPattern: /verdade|correto|confirma/ },
+    { claimPattern: /cancelad|rejeitad|derrubad/, reasonPattern: /aprovad|confirmad|mantid/ },
+    { claimPattern: /foi.*para|transferiu|mudou/, reasonPattern: /permanece|continua|fica/ }
+  ];
+  
+  for (const contradiction of contradictions) {
+    if (contradiction.claimPattern.test(normalizedClaim) && 
+        contradiction.reasonPattern.test(normalizedReason)) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 function bestPhrase(text: string){
@@ -140,21 +222,31 @@ function extractClaim(text: string): string {
 // Busca “lite” no DuckDuckGo com filtro site:
 async function ddgSearchSite(query: string, domain: string): Promise<{title:string,url:string}[]> {
   const q = `${query} site:${domain}`;
-  const resp = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
-    headers: { "User-Agent":"IAPivara/1.0" }
-  });
-  const html = await resp.text();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  
+  try {
+    const resp = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
+      headers: { "User-Agent":"IAPivara/1.0" },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    const html = await resp.text();
 
-  // DuckDuckGo HTML: resultados em <a class="result__a" href="...">titulo</a>
-  const out: {title:string,url:string}[] = [];
-  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/ig;
-  let m;
-  while ((m = re.exec(html)) && out.length < 8) {
-    const url = m[1];
-    const title = stripTags(m[2]).replace(/\s+/g," ").trim();
-    if (getHost(url).includes(domain)) out.push({ title, url });
+    const out: {title:string,url:string}[] = [];
+    const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/ig;
+    let m;
+    while ((m = re.exec(html)) && out.length < 8) {
+      const url = m[1];
+      const title = stripTags(m[2]).replace(/\s+/g," ").trim();
+      if (getHost(url).includes(domain)) out.push({ title, url });
+    }
+    return out;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.warn(`Search timeout for ${domain}:`, error);
+    return [];
   }
-  return out;
 }
 
 type Evidence = { source:string; title:string; url:string; score:number };
@@ -168,25 +260,30 @@ function titleMatchesDeath(title: string, personName: string) {
 }
 
 async function findCorroboration(claim: string): Promise<{all:Evidence[], strong:Evidence[], moderate:Evidence[]}> {
-  const stems = toStems(claim);
+  const enhancedStems = enhanceSearchTerms(claim);
   const names = extractNames(claim);
   const death = hasDeathIntent(claim);
   const primaryName = names[0];
 
   // query base
   const phrase = bestPhrase(claim);
-  const baseQuery = phrase ? `"${phrase}"` : stems.slice(0,6).join(" ");
+  const baseQuery = phrase ? `"${phrase}"` : enhancedStems.slice(0, 6).join(" ");
 
-  // consulta vários domínios
-  const perDomain = await Promise.all(TRUSTED_DOMAINS.map(async (dom) => {
-    const items = await ddgSearchSite(baseQuery, dom);
-    const evidences: Evidence[] = items.map(it => ({
-      source: dom,
-      title: it.title.slice(0, 140),
-      url: it.url.split("#")[0],
-      score: scoreByStems(it.title, stems)
-    }));
-    return evidences;
+  const priorityDomains = TRUSTED_DOMAINS.slice(0, 6);
+  const perDomain = await Promise.all(priorityDomains.map(async (dom) => {
+    try {
+      const items = await ddgSearchSite(baseQuery, dom);
+      const evidences: Evidence[] = items.map(it => ({
+        source: dom,
+        title: it.title.slice(0, 140),
+        url: it.url.split("#")[0],
+        score: scoreByStems(it.title, enhancedStems)
+      }));
+      return evidences;
+    } catch (error) {
+      console.warn(`Failed to search ${dom}:`, error);
+      return [];
+    }
   }));
 
   // dedupe por domínio (pega o melhor título)
@@ -295,13 +392,101 @@ const worker = {
       }, 200, CORS);
     }
 
+    const hasAnyEvidence = all.length > 0;
+    const hasGoodEvidence = all.filter(e => e.score >= 2).length > 0;
+    const hasModerateEvidence = all.filter(e => e.score >= 1).length > 0;
+    const totalScore = all.reduce((sum, e) => sum + e.score, 0);
+    const avgScore = hasAnyEvidence ? totalScore / all.length : 0;
+    const maxScore = hasAnyEvidence ? Math.max(...all.map(e => e.score)) : 0;
+    
     // 2) Fallback LLM para explicar incerteza
     const llm = await classifyWithLLM(env, claim, content);
+    const llmLight = llm?.light || "yellow";
+    const llmReason = llm?.reason || "sem confirmação";
+    const llmConfidence = Number(llm?.confidence ?? 0.5);
+    
+    const hasContradiction = detectContradiction(claim, llmReason);
+    
+    if (hasContradiction) {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "red",
+        confidence: Math.max(0.8, llmConfidence),
+        reason: "Informação contradiz evidências; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
+    if (hasGoodEvidence || (hasModerateEvidence && avgScore >= 1.2) || maxScore >= 3) {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "green",
+        confidence: Math.min(0.9, 0.7 + (maxScore * 0.05)),
+        reason: "Evidências sólidas encontradas em fontes confiáveis; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
+    if (llmConfidence >= 0.7) {
+      if (llmLight === "green") {
+        return json({
+          engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+          overall: "green",
+          confidence: llmConfidence,
+          reason: "Informação confirmada por análise; " + llmReason,
+          claim,
+          sources: url ? [url] : [],
+          evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+        }, 200, CORS);
+      }
+      
+      if (llmLight === "red") {
+        return json({
+          engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+          overall: "red",
+          confidence: llmConfidence,
+          reason: "Informação não confirmada por análise; " + llmReason,
+          claim,
+          sources: url ? [url] : [],
+          evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+        }, 200, CORS);
+      }
+    }
+    
+    if (hasModerateEvidence && llmLight === "green") {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "green",
+        confidence: Math.min(0.8, 0.6 + (avgScore * 0.1)),
+        reason: "Evidências moderadas com confirmação; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
+    if (!hasAnyEvidence && llmLight === "red") {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "red",
+        confidence: Math.max(0.6, llmConfidence),
+        reason: "Sem evidências em fontes confiáveis; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: []
+      }, 200, CORS);
+    }
+
+    // Default fallback -> amarelo
     return json({
       engine: env.TEST_MODE==="stub"?"stub":"workers-ai",
       overall: "yellow",
-      confidence: Math.max(0.5, Number(llm?.confidence ?? 0.5)),
-      reason: "Não encontrei evidências sólidas em fontes confiáveis; " + (llm?.reason ?? "sem confirmação."),
+      confidence: Math.max(0.5, llmConfidence),
+      reason: "Evidências insuficientes para classificação definitiva; " + llmReason,
       claim,
       sources: url ? [url] : [],
       evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
