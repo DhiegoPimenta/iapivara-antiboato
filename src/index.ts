@@ -179,7 +179,8 @@ function detectContradiction(claim: string, llmReason: string): boolean {
     { claimPattern: /nao|não/, reasonPattern: /sim|verdade|confirma/ },
     { claimPattern: /falso|mentira/, reasonPattern: /verdade|correto|confirma/ },
     { claimPattern: /cancelad|rejeitad|derrubad/, reasonPattern: /aprovad|confirmad|mantid/ },
-    { claimPattern: /foi.*para|transferiu|mudou/, reasonPattern: /permanece|continua|fica/ }
+    { claimPattern: /foi.*para|transferiu|mudou/, reasonPattern: /permanece|continua|fica/ },
+    { claimPattern: /causa|provoca|gera|resulta/, reasonPattern: /nao.*causa|não.*causa|nao.*provoca|não.*provoca|nenhuma.*evidencia|não.*encontr.*evidencia/ }
   ];
   
   for (const contradiction of contradictions) {
