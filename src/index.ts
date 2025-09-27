@@ -109,13 +109,21 @@ function scoreByStems(title: string, stems: string[]) {
   const t = removeDiacritics(title.toLowerCase());
   let s = stems.reduce((sum, st) => sum + (t.includes(st) ? 1 : 0), 0);
   
-  if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 1;
+  if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 2;
   
-  if (/(penta|pentacampe[aã]o|copa.*mundo|mundial.*futebol|1958|1962|1970|1994|2002|hexa|tetra|tri|bi)/.test(t)) s += 1;
+  if (/(penta|pentacampe[aã]o|copa.*mundo|mundial.*futebol|1958|1962|1970|1994|2002|hexa|tetra|tri|bi)/.test(t)) s += 2;
   
-  if (/(vivo|ativo|presidente|ex-presidente|candidato|politico|lider)/.test(t)) s += 1;
+  if (/(vivo|ativo|presidente|ex-presidente|candidato|politico|lider|morreu|morte|obito|faleceu)/.test(t)) s += 2;
   
-  if (/(confirma|confirmado|oficial|verdade|fato|historico|registro)/.test(t)) s += 1;
+  if (/(capital|sede|distrito.*federal|estado|regiao|litoral|praia|costa|porto)/.test(t)) s += 2;
+  
+  if (/(banda|musica|rock|emo|album|show|artista|cantor)/.test(t)) s += 2;
+  
+  if (/(parque|disney|investimento|construcao|projeto|anuncio)/.test(t)) s += 2;
+  
+  if (/(pec|emenda|constitucional|congresso|aprovacao|rejeicao|cancelada|aprovada)/.test(t)) s += 2;
+  
+  if (/(confirma|confirmado|verdade|fato|historico|registro|oficial)/.test(t)) s += 1;
   
   return s;
 }
@@ -128,18 +136,60 @@ function enhanceSearchTerms(claim: string): string[] {
   
   if (normalizedClaim.includes("penta") || normalizedClaim.includes("cinco") || normalizedClaim.includes("5")) {
     if (normalizedClaim.includes("brasil") || normalizedClaim.includes("copa")) {
-      enhanced.push("brasil", "pentacampeao", "copa", "mundo", "futebol", "1958", "1962", "1970", "1994", "2002");
+      enhanced.push("brasil", "pentacampeao", "copa", "mundo", "futebol", "selecao", "cbf");
     }
+  }
+  
+  if (normalizedClaim.includes("capital")) {
+    enhanced.push("capital", "sede", "governo", "distrito", "federal");
+  }
+  
+  if (normalizedClaim.includes("banda") || normalizedClaim.includes("emo") || normalizedClaim.includes("rock")) {
+    enhanced.push("musica", "banda", "rock", "emo", "album", "show");
+  }
+  
+  if (normalizedClaim.includes("litoral") || normalizedClaim.includes("praia") || normalizedClaim.includes("costa")) {
+    enhanced.push("litoral", "praia", "costa", "mar", "porto", "cidade");
+  }
+  
+  if (normalizedClaim.includes("parque") || normalizedClaim.includes("disney")) {
+    enhanced.push("parque", "tematico", "disney", "turismo", "investimento");
+  }
+  
+  if (normalizedClaim.includes("pec") || normalizedClaim.includes("blindagem")) {
+    enhanced.push("pec", "emenda", "constitucional", "congresso", "aprovacao", "rejeicao");
   }
   
   if (hasDeathIntent(claim)) {
     const names = extractNames(claim);
     if (names.length > 0) {
-      enhanced.push("vivo", "ativo", "presidente", "politico", "saude");
+      enhanced.push("morte", "obito", "falecimento", "morreu", "vivo", "ativo");
     }
   }
   
   return [...new Set(enhanced)];
+}
+
+function detectContradiction(claim: string, llmReason: string): boolean {
+  const normalizedClaim = removeDiacritics(claim.toLowerCase());
+  const normalizedReason = removeDiacritics(llmReason.toLowerCase());
+  
+  const contradictions = [
+    { claimPattern: /morreu|morte|obito|faleceu/, reasonPattern: /vivo|ativo|vive/ },
+    { claimPattern: /nao|não/, reasonPattern: /sim|verdade|confirma/ },
+    { claimPattern: /falso|mentira/, reasonPattern: /verdade|correto|confirma/ },
+    { claimPattern: /cancelad|rejeitad|derrubad/, reasonPattern: /aprovad|confirmad|mantid/ },
+    { claimPattern: /foi.*para|transferiu|mudou/, reasonPattern: /permanece|continua|fica/ }
+  ];
+  
+  for (const contradiction of contradictions) {
+    if (contradiction.claimPattern.test(normalizedClaim) && 
+        contradiction.reasonPattern.test(normalizedReason)) {
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 function bestPhrase(text: string){
@@ -368,48 +418,90 @@ const worker = {
     }
 
     const hasAnyEvidence = all.length > 0;
+    const hasGoodEvidence = all.filter(e => e.score >= 2).length > 0;
     const hasModerateEvidence = all.filter(e => e.score >= 1).length > 0;
     const totalScore = all.reduce((sum, e) => sum + e.score, 0);
     const avgScore = hasAnyEvidence ? totalScore / all.length : 0;
-    
-    if (!death && hasAnyEvidence && (avgScore >= 1.5 || hasModerateEvidence)) {
-      const llm = await classifyWithLLM(env, claim, content);
-      return json({
-        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
-        overall: "green",
-        confidence: Math.min(0.85, 0.6 + (avgScore * 0.1)),
-        reason: "Evidências encontradas em fontes confiáveis suportam a alegação; " + (llm?.reason ?? "informação verificada."),
-        claim,
-        sources: url ? [url] : [],
-        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
-      }, 200, CORS);
-    }
+    const maxScore = hasAnyEvidence ? Math.max(...all.map(e => e.score)) : 0;
     
     const llm = await classifyWithLLM(env, claim, content);
     const llmLight = llm?.light || "yellow";
     const llmReason = llm?.reason || "sem confirmação";
+    const llmConfidence = Number(llm?.confidence ?? 0.5);
     
-    if (llmLight === "green") {
+    const hasContradiction = detectContradiction(claim, llmReason);
+    
+    if (hasContradiction && llmConfidence >= 0.6) {
       return json({
         engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
-        overall: "green",
-        confidence: Math.max(0.75, Number(llm?.confidence ?? 0.75)),
-        reason: "Informação confirmada; " + llmReason,
+        overall: "red",
+        confidence: Math.max(0.8, llmConfidence),
+        reason: "Informação contradiz evidências; " + llmReason,
         claim,
         sources: url ? [url] : [],
         evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
       }, 200, CORS);
     }
     
-    if (llmLight === "red") {
+    if (hasGoodEvidence || (hasModerateEvidence && avgScore >= 1.2) || maxScore >= 3) {
       return json({
         engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
-        overall: "red",
-        confidence: Math.max(0.75, Number(llm?.confidence ?? 0.75)),
-        reason: "Informação não confirmada; " + llmReason,
+        overall: "green",
+        confidence: Math.min(0.9, 0.7 + (maxScore * 0.05)),
+        reason: "Evidências sólidas encontradas em fontes confiáveis; " + llmReason,
         claim,
         sources: url ? [url] : [],
         evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
+    if (llmConfidence >= 0.7) {
+      if (llmLight === "green") {
+        return json({
+          engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+          overall: "green",
+          confidence: llmConfidence,
+          reason: "Informação confirmada por análise; " + llmReason,
+          claim,
+          sources: url ? [url] : [],
+          evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+        }, 200, CORS);
+      }
+      
+      if (llmLight === "red") {
+        return json({
+          engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+          overall: "red",
+          confidence: llmConfidence,
+          reason: "Informação não confirmada por análise; " + llmReason,
+          claim,
+          sources: url ? [url] : [],
+          evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+        }, 200, CORS);
+      }
+    }
+    
+    if (hasModerateEvidence && llmLight === "green") {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "green",
+        confidence: Math.min(0.8, 0.6 + (avgScore * 0.1)),
+        reason: "Evidências moderadas com confirmação; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
+      }, 200, CORS);
+    }
+    
+    if (!hasAnyEvidence && llmLight === "red") {
+      return json({
+        engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
+        overall: "red",
+        confidence: Math.max(0.6, llmConfidence),
+        reason: "Sem evidências em fontes confiáveis; " + llmReason,
+        claim,
+        sources: url ? [url] : [],
+        evidence: []
       }, 200, CORS);
     }
 
@@ -417,8 +509,8 @@ const worker = {
     return json({
       engine: env.TEST_MODE==="stub" ? "stub" : "workers-ai",
       overall: "yellow",
-      confidence: Math.max(0.5, Number(llm?.confidence ?? 0.5)),
-      reason: "Não encontrei evidências sólidas em fontes confiáveis; " + llmReason,
+      confidence: Math.max(0.5, llmConfidence),
+      reason: "Evidências insuficientes para classificação definitiva; " + llmReason,
       claim,
       sources: url ? [url] : [],
       evidence: all.map(e=>({ source:e.source, title:e.title, url:e.url }))
