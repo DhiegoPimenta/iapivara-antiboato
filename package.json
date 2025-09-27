@@ -1,0 +1,28 @@
+{
+  "name": "iapivara",
+  "version": "1.0.0",
+  "description": "A **IAPivara** é uma iniciativa **open source** para combater a desinformação no Brasil.  \r Nosso objetivo é criar uma **IA brasileira focada exclusivamente na checagem de fake news**, priorizando **fontes confiáveis de informação** como G1, Agência Brasil, BBC, gov.br, entre outras.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "ts-node --project tsconfig.json tests/tests.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DhiegoPimenta/iapivara-antiboato.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/DhiegoPimenta/iapivara-antiboato/issues"
+  },
+  "homepage": "https://github.com/DhiegoPimenta/iapivara-antiboato#readme",
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
