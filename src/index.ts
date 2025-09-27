@@ -108,8 +108,38 @@ function toStems(text: string): string[] {
 function scoreByStems(title: string, stems: string[]) {
   const t = removeDiacritics(title.toLowerCase());
   let s = stems.reduce((sum, st) => sum + (t.includes(st) ? 1 : 0), 0);
+  
   if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 1;
+  
+  if (/(penta|pentacampe[aã]o|copa.*mundo|mundial.*futebol|1958|1962|1970|1994|2002|hexa|tetra|tri|bi)/.test(t)) s += 1;
+  
+  if (/(vivo|ativo|presidente|ex-presidente|candidato|politico|lider)/.test(t)) s += 1;
+  
+  if (/(confirma|confirmado|oficial|verdade|fato|historico|registro)/.test(t)) s += 1;
+  
   return s;
+}
+
+function enhanceSearchTerms(claim: string): string[] {
+  const stems = toStems(claim);
+  const enhanced = [...stems];
+  
+  const normalizedClaim = removeDiacritics(claim.toLowerCase());
+  
+  if (normalizedClaim.includes("penta") || normalizedClaim.includes("cinco") || normalizedClaim.includes("5")) {
+    if (normalizedClaim.includes("brasil") || normalizedClaim.includes("copa")) {
+      enhanced.push("brasil", "pentacampeao", "copa", "mundo", "futebol", "1958", "1962", "1970", "1994", "2002");
+    }
+  }
+  
+  if (hasDeathIntent(claim)) {
+    const names = extractNames(claim);
+    if (names.length > 0) {
+      enhanced.push("vivo", "ativo", "presidente", "politico", "saude");
+    }
+  }
+  
+  return [...new Set(enhanced)];
 }
 
 function bestPhrase(text: string){
@@ -141,20 +171,31 @@ function extractClaim(text: string): string {
 
 async function ddgSearchSite(query: string, domain: string): Promise<{title:string,url:string}[]> {
   const q = `${query} site:${domain}`;
-  const resp = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
-    headers: { "User-Agent":"IAPivara/1.0" }
-  });
-  const html = await resp.text();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  
+  try {
+    const resp = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
+      headers: { "User-Agent":"IAPivara/1.0" },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    const html = await resp.text();
 
-  const out: {title:string,url:string}[] = [];
-  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/ig;
-  let m;
-  while ((m = re.exec(html)) && out.length < 8) {
-    const url = m[1];
-    const title = stripTags(m[2]).replace(/\s+/g," ").trim();
-    if (getHost(url).includes(domain)) out.push({ title, url });
+    const out: {title:string,url:string}[] = [];
+    const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/ig;
+    let m;
+    while ((m = re.exec(html)) && out.length < 8) {
+      const url = m[1];
+      const title = stripTags(m[2]).replace(/\s+/g," ").trim();
+      if (getHost(url).includes(domain)) out.push({ title, url });
+    }
+    return out;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.warn(`Search timeout for ${domain}:`, error);
+    return [];
   }
-  return out;
 }
 
 type Evidence = { source:string; title:string; url:string; score:number };
@@ -168,23 +209,28 @@ function titleMatchesDeath(title: string, personName: string) {
 }
 
 async function findCorroboration(claim: string): Promise<{all:Evidence[], strong:Evidence[], moderate:Evidence[]}> {
-  const stems = toStems(claim);
+  const enhancedStems = enhanceSearchTerms(claim);
   const names = extractNames(claim);
   const death = hasDeathIntent(claim);
   const primaryName = names[0];
 
   const phrase = bestPhrase(claim);
-  const baseQuery = phrase ? `"${phrase}"` : stems.slice(0, 6).join(" ");
+  const baseQuery = phrase ? `"${phrase}"` : enhancedStems.slice(0, 6).join(" ");
 
   const perDomain = await Promise.all(TRUSTED_DOMAINS.map(async (dom) => {
-    const items = await ddgSearchSite(baseQuery, dom);
-    const evidences: Evidence[] = items.map(it => ({
-      source: dom,
-      title: it.title.slice(0, 140),
-      url: it.url.split("#")[0],
-      score: scoreByStems(it.title, stems)
-    }));
-    return evidences;
+    try {
+      const items = await ddgSearchSite(baseQuery, dom);
+      const evidences: Evidence[] = items.map(it => ({
+        source: dom,
+        title: it.title.slice(0, 140),
+        url: it.url.split("#")[0],
+        score: scoreByStems(it.title, enhancedStems)
+      }));
+      return evidences;
+    } catch (error) {
+      console.warn(`Failed to search ${dom}:`, error);
+      return [];
+    }
   }));
 
   const allRaw = perDomain.flat();
