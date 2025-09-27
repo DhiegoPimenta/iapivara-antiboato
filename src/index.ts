@@ -109,23 +109,26 @@ function scoreByStems(title: string, stems: string[]) {
   const t = removeDiacritics(title.toLowerCase());
   let s = stems.reduce((sum, st) => sum + (t.includes(st) ? 1 : 0), 0);
   
-  if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 2;
+  if (/(oficial|confirm|anuncia|decide|aprov|derrub|campe[aã]o|t[ií]tulo)/.test(t)) s += 1;
   
-  if (/(penta|pentacampe[aã]o|copa.*mundo|mundial.*futebol|1958|1962|1970|1994|2002|hexa|tetra|tri|bi)/.test(t)) s += 2;
+  if (/(penta|pentacampe[aã]o|copa.*mundo|mundial.*futebol|1958|1962|1970|1994|2002|hexa|tetra|tri|bi)/.test(t)) s += 1;
   
-  if (/(vivo|ativo|presidente|ex-presidente|candidato|politico|lider|morreu|morte|obito|faleceu)/.test(t)) s += 2;
+  if (/(vivo|ativo|presidente|ex-presidente|candidato|politico|lider)/.test(t)) s += 1;
   
-  if (/(capital|sede|distrito.*federal|estado|regiao|litoral|praia|costa|porto)/.test(t)) s += 2;
+  if (/(capital|sede|distrito.*federal|estado|regiao|litoral|praia|costa|porto)/.test(t)) s += 1;
   
-  if (/(banda|musica|rock|emo|album|show|artista|cantor)/.test(t)) s += 2;
+  if (/(banda|musica|rock|emo|album|show|artista|cantor)/.test(t)) s += 1;
   
-  if (/(parque|disney|investimento|construcao|projeto|anuncio)/.test(t)) s += 2;
+  if (/(parque|disney|investimento|construcao|projeto|anuncio)/.test(t)) s += 1;
   
-  if (/(pec|emenda|constitucional|congresso|aprovacao|rejeicao|cancelada|aprovada)/.test(t)) s += 2;
+  if (/(pec|emenda|constitucional|congresso|aprovacao|rejeicao|cancelada|aprovada)/.test(t)) s += 1;
   
-  if (/(confirma|confirmado|verdade|fato|historico|registro|oficial)/.test(t)) s += 1;
+  if (/(confirma|confirmado|verdade|fato|historico|registro|oficial)/.test(t)) s += 0.5;
   
-  return s;
+  if (/(morreu|morte|obito|faleceu)/.test(t) && /(vivo|ativo)/.test(t)) s -= 1;
+  if (/(cancelad|rejeitad|derrubad)/.test(t) && /(aprovad|confirmad|mantid)/.test(t)) s -= 1;
+  
+  return Math.max(0, s);
 }
 
 function enhanceSearchTerms(claim: string): string[] {
@@ -136,34 +139,38 @@ function enhanceSearchTerms(claim: string): string[] {
   
   if (normalizedClaim.includes("penta") || normalizedClaim.includes("cinco") || normalizedClaim.includes("5")) {
     if (normalizedClaim.includes("brasil") || normalizedClaim.includes("copa")) {
-      enhanced.push("brasil", "pentacampeao", "copa", "mundo", "futebol", "selecao", "cbf");
+      enhanced.push("brasil", "pentacampeao", "copa", "mundo", "futebol", "selecao", "cbf", "1958", "1962", "1970", "1994", "2002");
     }
   }
   
   if (normalizedClaim.includes("capital")) {
-    enhanced.push("capital", "sede", "governo", "distrito", "federal");
+    enhanced.push("capital", "sede", "governo", "distrito", "federal", "brasilia");
   }
   
   if (normalizedClaim.includes("banda") || normalizedClaim.includes("emo") || normalizedClaim.includes("rock")) {
-    enhanced.push("musica", "banda", "rock", "emo", "album", "show");
+    enhanced.push("musica", "banda", "rock", "emo", "album", "show", "nx", "zero");
   }
   
   if (normalizedClaim.includes("litoral") || normalizedClaim.includes("praia") || normalizedClaim.includes("costa")) {
-    enhanced.push("litoral", "praia", "costa", "mar", "porto", "cidade");
+    enhanced.push("litoral", "praia", "costa", "mar", "porto", "cidade", "santos", "sao", "paulo");
   }
   
   if (normalizedClaim.includes("parque") || normalizedClaim.includes("disney")) {
-    enhanced.push("parque", "tematico", "disney", "turismo", "investimento");
+    enhanced.push("parque", "tematico", "disney", "turismo", "investimento", "brasil", "construcao");
   }
   
   if (normalizedClaim.includes("pec") || normalizedClaim.includes("blindagem")) {
-    enhanced.push("pec", "emenda", "constitucional", "congresso", "aprovacao", "rejeicao");
+    enhanced.push("pec", "emenda", "constitucional", "congresso", "aprovacao", "rejeicao", "blindagem", "cancelada");
+  }
+  
+  if (normalizedClaim.includes("solteira") || normalizedClaim.includes("solteiro") || normalizedClaim.includes("casad") || normalizedClaim.includes("namorand")) {
+    enhanced.push("relacionamento", "namoro", "casamento", "solteira", "solteiro", "separacao");
   }
   
   if (hasDeathIntent(claim)) {
     const names = extractNames(claim);
     if (names.length > 0) {
-      enhanced.push("morte", "obito", "falecimento", "morreu", "vivo", "ativo");
+      enhanced.push("morte", "obito", "falecimento", "morreu", "vivo", "ativo", "saude", "hospital");
     }
   }
   
@@ -180,7 +187,12 @@ function detectContradiction(claim: string, llmReason: string): boolean {
     { claimPattern: /falso|mentira/, reasonPattern: /verdade|correto|confirma/ },
     { claimPattern: /cancelad|rejeitad|derrubad/, reasonPattern: /aprovad|confirmad|mantid/ },
     { claimPattern: /foi.*para|transferiu|mudou/, reasonPattern: /permanece|continua|fica/ },
-    { claimPattern: /causa|provoca|gera|resulta/, reasonPattern: /nao.*causa|não.*causa|nao.*provoca|não.*provoca|nenhuma.*evidencia|não.*encontr.*evidencia/ }
+    { claimPattern: /causa|provoca|gera|resulta/, reasonPattern: /nao.*causa|não.*causa|nao.*provoca|não.*provoca|nenhuma.*evidencia|não.*encontr.*evidencia/ },
+    { claimPattern: /esta.*vivo|está.*vivo/, reasonPattern: /morreu|faleceu|morte|obito/ },
+    { claimPattern: /esta.*morto|está.*morto/, reasonPattern: /vivo|ativo|vive/ },
+    { claimPattern: /vai.*abrir|abrira|construir/, reasonPattern: /nao.*vai|não.*vai|cancelad|rejeitad|sem.*planos/ },
+    { claimPattern: /solteira|solteiro/, reasonPattern: /casad|namorand|relacionament/ },
+    { claimPattern: /casad|namorand/, reasonPattern: /solteira|solteiro|separad/ }
   ];
   
   for (const contradiction of contradictions) {
@@ -325,6 +337,14 @@ INSTRUÇÕES ESPECÍFICAS:
 - Seja DIRETO e FACTUAL, evite especulações
 - Para mortes/óbitos: só confirme se há múltiplas fontes confiáveis
 - Para fatos históricos/esportivos: use conhecimento estabelecido (ex: Brasil é pentacampeão)
+- Para status de celebridades: seja conservador, prefira YELLOW se incerto
+- NUNCA invente informações - se não tem certeza, retorne YELLOW
+
+EXEMPLOS DE RACIOCÍNIO:
+- "Gugu morreu?" + evidências de morte → GREEN
+- "Gugu está vivo?" + evidências de morte → RED  
+- "X causa Y?" + evidências "X não causa Y" → RED
+- Sem evidências claras → YELLOW
 
 FORMATO: {"light":"red|yellow|green","confidence":0-1,"reason":"explicação clara e direta"}`;
 
